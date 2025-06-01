@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Negotiation Chatbot Tests</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .test-case { margin-bottom: 10px; border-left: 3px solid; padding-left: 10px; }
+    .test-case.passed { border-left-color: green; }
+    .test-case.failed { border-left-color: red; }
+    .summary { margin-top: 20px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Negotiation Chatbot Tests</h1>
+  <div id="testResults"></div>
+  <div id="summary" class="summary"></div>
+
+  <script>
+    // --- Test Runner Logic ---
+    const testResults = document.getElementById('testResults');
+    const summary = document.getElementById('summary');
+    let testsPassed = 0;
+    let testsFailed = 0;
+
+    function describe(description, fn) {
+      const describeBlock = document.createElement('div');
+      describeBlock.innerHTML = `<h2>${description}</h2>`;
+      testResults.appendChild(describeBlock);
+      fn();
+    }
+
+    function it(description, fn) {
+      const testCase = document.createElement('div');
+      testCase.classList.add('test-case');
+      try {
+        fn();
+        testCase.textContent = `PASSED: ${description}`;
+        testCase.classList.add('passed');
+        testsPassed++;
+      } catch (e) {
+        testCase.textContent = `FAILED: ${description} - ${e.message}`;
+        testCase.classList.add('failed');
+        console.error(`Test FAILED: ${description}`, e);
+        testsFailed++;
+      }
+      testResults.appendChild(testCase);
+    }
+
+    function assertEqual(actual, expected, message) {
+      if (actual !== expected) {
+        throw new Error(`${message} Expected ${expected}, but got ${actual}`);
+      }
+    }
+
+    function assertलगभगEqual(actual, expected, tolerance = 0.01, message) {
+      if (Math.abs(actual - expected) > tolerance) {
+        throw new Error(`${message} Expected ${expected} (approx.), but got ${actual}`);
+      }
+    }
+
+    function assertTrue(value, message) {
+      if (!value) {
+        throw new Error(`${message} Expected true, but got false`);
+      }
+    }
+
+    // --- End of Test Runner Logic ---
+  </script>
+
+  <script>
+    // --- Logic from chat_negotiate.html (Copied and pasted for testing) ---
+    // NOTE: In a real project, you'd use modules or include the script file.
+    // For this environment, we'll copy the necessary parts.
+
+    const originalPrice = 100;
+    const minDiscount = 18; // Minimum acceptable discount percentage
+    const maxDiscount = 22; // Maximum acceptable discount percentage
+    const initialMarkup = 20; // Start 20% higher than the original price
+
+    // Phrases (not strictly needed for these tests but included for completeness if testing getPhrase later)
+    const phrases = {
+      initial: ["Let's talk price."],
+      tooLow: ["Bit low."],
+      close: ["Getting warmer."],
+      accept: ["Deal."],
+      counter: ["How about {counterOffer}?"],
+      hardball: ["That's way too low."]
+    };
+
+    const getPhrase = (category, counterOffer) => {
+      const phrase = phrases[category][Math.floor(Math.random() * phrases[category].length)];
+      return counterOffer ? phrase.replace('{counterOffer}', `$${counterOffer.toFixed(2)}`) : phrase;
+    };
+
+    const extractNumber = (text) => {
+      const match = text.match(/\d+(\.\d+)?/);
+      return match ? parseFloat(match[0]) : null;
+    };
+
+    // Global state for calculateCounterOffer and handleSubmit (simplified for testing)
+    let currentOffer = originalPrice * (1 + initialMarkup / 100); // Initial bot offer
+    let exchangeCount = 0; // Number of exchanges in the negotiation
+
+    const calculateCounterOffer = (userOffer) => {
+      const minAcceptable = originalPrice * (1 - maxDiscount / 100); // e.g., 100 * (1 - 0.22) = 78
+      const maxAcceptable = originalPrice * (1 - minDiscount / 100); // e.g., 100 * (1 - 0.18) = 82
+
+      // Simulate the bot's current offer for consistent testing.
+      // This might be different from the global `currentOffer` in a live scenario,
+      // but for unit testing `calculateCounterOffer`, we need a defined input.
+      let botCurrentOfferForCalc = currentOffer; // Use the global currentOffer for the test sequence
+
+      const range = botCurrentOfferForCalc - minAcceptable;
+      // Ensure exchangeCount is reasonable for the step calculation, max 9 to avoid division by zero or negative
+      const effectiveExchangeCount = Math.min(exchangeCount, 9);
+      const step = range / (10 - effectiveExchangeCount);
+      let newOffer = Math.max(botCurrentOfferForCalc - step, minAcceptable);
+
+      if (userOffer > newOffer && userOffer < botCurrentOfferForCalc) {
+        newOffer = (userOffer + newOffer) / 2;
+      }
+      return Math.min(Math.max(newOffer, minAcceptable), maxAcceptable);
+    };
+
+    // Simplified handleSubmit logic for testing core response generation
+    // We won't manipulate actual DOM elements here.
+    // We'll return the bot's response type or key values.
+    function testHandleSubmit(userInputText) {
+      const extractedNumber = extractNumber(userInputText);
+      if (extractedNumber === null) {
+        return "NAN_INPUT"; // Not a Number Input
+      }
+
+      exchangeCount++; // Increment for each call during a sequence
+      const offer = extractedNumber;
+      const discount = (originalPrice - offer) / originalPrice * 100;
+      let responseType;
+
+      if (discount < minDiscount) { // Less than 18% discount (e.g., offer > 82)
+        responseType = (exchangeCount < 3 || Math.random() < 0.3) ? "HARDBALL" : "TOO_LOW";
+      } else if (discount <= maxDiscount) { // 18% to 22% discount (e.g., offer between 78 and 82 inclusive)
+        responseType = "ACCEPT";
+      } else { // More than 22% discount (e.g., offer < 78)
+        const newCounter = calculateCounterOffer(offer);
+        // Update global currentOffer for next step in sequence
+        // This is important for multi-turn test scenarios
+        if (newCounter < currentOffer) {
+         currentOffer = newCounter;
+        }
+        responseType = newCounter < currentOffer || currentOffer === newCounter ? "COUNTER" : "CLOSE";
+      }
+      return { responseType, currentBotOffer: currentOffer, userOffer: offer, discount: discount };
+    }
+    // --- End of Logic from chat_negotiate.html ---
+  </script>
+
+  <script>
+    // --- Test Cases ---
+    window.onload = () => {
+      describe('extractNumber()', () => {
+        it('should extract an integer', () => {
+          assertEqual(extractNumber("I offer 50 dollars"), 50, "Integer extraction failed.");
+        });
+        it('should extract a decimal number', () => {
+          assertEqual(extractNumber("How about 75.50?"), 75.50, "Decimal extraction failed.");
+        });
+        it('should return null if no number is present', () => {
+          assertEqual(extractNumber("No deal."), null, "Null return for no number failed.");
+        });
+        it('should extract number from start of string', () => {
+          assertEqual(extractNumber("25 is my offer"), 25, "Number at start failed.");
+        });
+        it('should handle multiple numbers (takes first)', () => {
+          assertEqual(extractNumber("I can do 60 or maybe 65"), 60, "Multiple numbers (take first) failed.");
+        });
+      });
+
+      describe('calculateCounterOffer()', () => {
+        // Reset global state for this test suite if needed, or manage it per 'it' block
+        // For now, assumes a fresh state or sequential testing of currentOffer updates
+        currentOffer = originalPrice * (1 + initialMarkup / 100); // Reset to initial 120
+        exchangeCount = 0; // Reset
+
+        it('should calculate a counter offer correctly when user offer is too low', () => {
+          // Initial bot offer is 120. User offers 70 (too low, >22% discount).
+          // minAcceptable = 78, maxAcceptable = 82
+          // range = 120 - 78 = 42. step = 42 / (10-0) = 4.2
+          // newOffer = max(120 - 4.2, 78) = max(115.8, 78) = 115.8
+          // This will be capped by maxAcceptable if logic was different, but here it's a counter.
+          // The function is designed to return a value between min and max acceptable IF it were to accept,
+          // or a value *within its acceptable final range* if it's making a final counter.
+          // Re-reading: "newOffer = Math.max(currentOffer - step, minAcceptable);"
+          // "return Math.min(Math.max(newOffer, minAcceptable), maxAcceptable);"
+          // This means the counter offer is always within the bot's winnable range.
+          // So if bot is at 120, user offers 70. exchange 0.
+          // newOffer by bot = 115.8. This is the bot's new position.
+          // The function then returns min(max(115.8, 78), 82) = 82. This is confusing.
+          // The purpose of `calculateCounterOffer` is to decide the BOT'S next offer if the user's offer is too low.
+          // Let's re-evaluate `handleSubmit`: if discount > maxDiscount (offer is very low), it calls `calculateCounterOffer`.
+          // `const newOffer = calculateCounterOffer(offer); currentOffer = newOffer; botResponse = getPhrase('counter', newOffer);`
+          // So, the return value of `calculateCounterOffer` becomes the bot's new `currentOffer`.
+          // Test 1: User offers 70. Bot was at 120. exchangeCount = 0.
+          // Expected: bot should counter higher than 78.
+          // calc: minA=78, maxA=82. currentOffer=120. range=42. step=4.2.
+          // newOfferInternal = max(120-4.2, 78) = 115.8.
+          // returned = min(max(115.8, 78), 82) = 82. So bot counters with 82.
+          // This seems to be the intended logic: the bot makes a counter that is its best possible price.
+          const counter1 = calculateCounterOffer(70); // User offers 70
+          assertEqual(counter1, 82, "Counter for 70 should be 82 (maxAcceptable)");
+          currentOffer = counter1; // Bot's new position is 82.
+          exchangeCount++; // exchangeCount = 1
+
+          // Test 2: User offers 75. Bot is at 82. exchangeCount = 1.
+          // minA=78, maxA=82. currentOffer=82. range=82-78=4. step=4/(10-1)=0.444.
+          // newOfferInternal = max(82-0.444, 78) = max(81.556, 78) = 81.556.
+          // userOffer (75) > newOfferInternal (81.556) is FALSE.
+          // returned = min(max(81.556, 78), 82) = 81.556
+          const counter2 = calculateCounterOffer(75);
+          assertलगभगEqual(counter2, 81.55, 0.01, "Counter for 75 should be approx 81.55");
+          currentOffer = counter2;
+          exchangeCount++; // exchangeCount = 2
+
+          // Test 3: User offers 80. Bot is at 81.55. exchangeCount = 2.
+          // minA=78, maxA=82. currentOffer=81.55. range=81.55-78=3.55. step=3.55/(10-2)=0.44375
+          // newOfferInternal = max(81.55 - 0.44375, 78) = max(81.10625, 78) = 81.10625
+          // userOffer (80) > newOfferInternal (81.10625) is FALSE.
+          // returned = min(max(81.10625, 78), 82) = 81.10625
+          const counter3 = calculateCounterOffer(80);
+          assertलगभगEqual(counter3, 81.10, 0.01, "Counter for 80 should be approx 81.10");
+          currentOffer = counter3;
+          exchangeCount++;
+        });
+      });
+
+      describe('testHandleSubmit() - Simplified Bot Logic', () => {
+        // Reset global state for each scenario or manage carefully
+        function resetBotState() {
+          currentOffer = originalPrice * (1 + initialMarkup / 100); // 120
+          exchangeCount = 0;
+          // Math.random can be mocked for predictable hardball/tooLow, but not doing it here for simplicity
+        }
+
+        it('should return ACCEPT if offer is within min/max discount', () => {
+          resetBotState(); // Bot starts at 120
+          // User offers 80. Discount = (100-80)/100*100 = 20%. minDisc=18, maxDisc=22. 18 <= 20 <= 22 is true.
+          const result = testHandleSubmit("I offer 80");
+          assertEqual(result.responseType, "ACCEPT", "Offer 80 (20% disc) should be ACCEPTED.");
+        });
+
+        it('should return ACCEPT for offer at minDiscount boundary', () => {
+          resetBotState();
+          // User offers 82. Discount = (100-82)/100*100 = 18%. Should be accepted.
+          const result = testHandleSubmit("My price is 82");
+          assertEqual(result.responseType, "ACCEPT", "Offer 82 (18% disc) should be ACCEPTED.");
+        });
+
+        it('should return ACCEPT for offer at maxDiscount boundary', () => {
+          resetBotState();
+          // User offers 78. Discount = (100-78)/100*100 = 22%. Should be accepted.
+          const result = testHandleSubmit("78 is final.");
+          assertEqual(result.responseType, "ACCEPT", "Offer 78 (22% disc) should be ACCEPTED.");
+        });
+
+        it('should return HARDBALL/TOO_LOW if offer discount is too small (user offers too high a price)', () => {
+          resetBotState(); // Bot starts at 120
+          // User offers 90. Discount = (100-90)/100*100 = 10%. minDiscount=18. 10 < 18 is true.
+          // exchangeCount will be 1. (exchangeCount < 3) is true, so HARDBALL expected (unless Math.random threshold not met)
+          // To make it deterministic for testing, we'd mock Math.random. Assuming it goes to HARDBALL for now.
+          let result = testHandleSubmit("How about 90?"); // exchangeCount becomes 1
+          assertTrue(["HARDBALL", "TOO_LOW"].includes(result.responseType), "Offer 90 (10% disc) should be HARDBALL or TOO_LOW.");
+
+          result = testHandleSubmit("Okay, 85?"); // exchangeCount becomes 2. Discount 15%.
+          assertTrue(["HARDBALL", "TOO_LOW"].includes(result.responseType), "Offer 85 (15% disc) should be HARDBALL or TOO_LOW.");
+
+          // exchangeCount becomes 3. Now it should be TOO_LOW if Math.random() >= 0.3
+          // Or HARDBALL if Math.random() < 0.3. This makes direct assertion tricky without mocking.
+          // For now, we accept either.
+          result = testHandleSubmit("Alright, 83?"); // exchangeCount becomes 3. Discount 17%.
+          assertTrue(["HARDBALL", "TOO_LOW"].includes(result.responseType), "Offer 83 (17% disc) should be HARDBALL or TOO_LOW.");
+        });
+
+        it('should return COUNTER if offer discount is too large (user offers too low a price)', () => {
+          resetBotState(); // Bot starts at 120. exchangeCount = 0.
+          // User offers 70. Discount = (100-70)/100*100 = 30%. maxDiscount=22. 30 > 22 is true.
+          // Bot should counter. exchangeCount becomes 1.
+          // calculateCounterOffer(70) with currentOffer=120, exCount=0 (inside handleSubmit, exCount is already 1 for calc)
+          // calcCounter will use exCount=1 (as it's post-increment).
+          // calcCounter(70): currentOffer=120, ex=0 => returns 82. Bot's new currentOffer becomes 82.
+          const result = testHandleSubmit("I can do 70");
+          assertEqual(result.responseType, "COUNTER", "Offer 70 (30% disc) should result in a COUNTER.");
+          assertलगभगEqual(result.currentBotOffer, 82, 0.01, "Bot's new offer should be 82 after countering 70.");
+        });
+
+        it('should handle a sequence of negotiation leading to acceptance', () => {
+          resetBotState(); // Bot at 120, exCount = 0
+
+          // 1. User: 70 (too low) -> Bot: Counters to 82
+          let res = testHandleSubmit("70"); // exCount = 1, botOffer becomes 82
+          assertEqual(res.responseType, "COUNTER", "Seq1: COUNTER expected");
+          assertलगभगEqual(res.currentBotOffer, 82, 0.01, "Seq1: Bot new offer 82");
+
+          // 2. User: 79 (acceptable for bot at 82) -> Bot: Accepts
+          // User offers 79. Bot is at 82. Discount for 79 is 21%. (18 <= 21 <= 22) -> ACCEPT
+          res = testHandleSubmit("What about 79"); // exCount = 2
+          assertEqual(res.responseType, "ACCEPT", "Seq2: ACCEPT expected for 79");
+        });
+
+        it('should return NAN_INPUT if no number in user input', () => {
+          resetBotState();
+          const result = testHandleSubmit("No way!");
+          assertEqual(result.responseType, "NAN_INPUT", "Should return NAN_INPUT for non-numeric input.");
+        });
+
+      });
+
+      // Final summary
+      document.getElementById('summary').textContent = `Tests completed: ${testsPassed} passed, ${testsFailed} failed.`;
+    };
+  </script>
+</body>
+</html>

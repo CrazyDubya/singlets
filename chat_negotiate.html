@@ -29,6 +29,16 @@
       background-color: #f0f0f0;
       border-bottom: 1px solid #ccc;
     }
+    .negotiation-parameters {
+      padding: 10px;
+      background-color: #f8f8f8;
+      border-bottom: 1px solid #ccc;
+      font-size: 0.9em;
+      color: #333;
+    }
+    .negotiation-parameters p {
+      margin: 5px 0;
+    }
     .chat-messages {
       height: 300px;
       overflow-y: auto;
@@ -79,22 +89,247 @@
   <div class="chat-container">
     <div class="chat-header">
       <h2>Negotiation Chatbot</h2>
+      <div class="negotiation-parameters">
+        <p>Original Price: $<span id="paramOriginalPrice"></span></p>
+        <p>Acceptable Discount Range: <span id="paramMinDiscount"></span>% - <span id="paramMaxDiscount"></span>%</p>
+      </div>
     </div>
     <div class="chat-messages" id="chatMessages"></div>
     <form class="chat-input" id="chatForm">
-      <input type="text" id="chatInput" placeholder="Enter your offer" disabled>
-      <button type="submit" id="chatButton" disabled>Send</button>
+      <input type="text" id="chatInput" placeholder="Enter your offer">
+      <button type="submit" id="chatButton">Send</button>
+      <button type="button" id="resetButton" style="margin-left: 5px;">Reset</button>
     </form>
   </div>
 
   <script>
-    const originalPrice = 100;
-    const minDiscount = 18;
-    const maxDiscount = 22;
-    const initialMarkup = 20; // Start 20% higher than the original price
+    // --- Global Constants for Negotiation Logic ---
+    const originalPrice = 100; // Base price of the item being negotiated.
+    const minDiscount = 18; // Minimum acceptable discount percentage from the original price.
+    const maxDiscount = 22; // Maximum acceptable discount percentage from the original price.
+    const initialMarkup = 20; // Percentage markup on the original price for the bot's initial offer.
 
+    // --- Phrase Categories for Bot Responses ---
     const phrases = {
-      initial: [
+      initial: [ // Phrases for starting the negotiation.
+        "Let's talk price.", "What's your offer?", "How much you thinking?",
+        "Give me a number.", "What's fair to you?", "Your best price?",
+        "Make me an offer.", "What's your budget?", "Throw out a figure.",
+        "Where should we start?"
+      ],
+      tooLow: [ // Phrases for when the user's offer is too low but not extremely so.
+        "Bit low.", "Can't do that.", "Try higher.", "Not quite there.",
+        "Bump it up?", "That's a stretch.", "Aim higher.", "We're far apart.",
+        "Needs work.", "Think bigger."
+      ],
+      close: [ // Phrases for when the user's offer is close to an acceptable range.
+        "Getting warmer.", "We're close.", "Almost there.", "Not bad.",
+        "Interesting...", "You're in the ballpark.", "We're making progress.",
+        "That's more like it.", "Now we're talking.", "You're on the right track."
+      ],
+      accept: [ // Phrases for accepting the user's offer.
+        "Deal.", "Sold.", "You got it.", "Fair enough.", "Let's do it.",
+        "I can work with that.", "That'll do.", "We have an agreement.",
+        "Sounds good to me.", "I think we can shake on that."
+      ],
+      counter: [ // Phrases for making a counter-offer. '{counterOffer}' is a placeholder.
+        "How about {counterOffer}?", "What if we say {counterOffer}?",
+        "Could you do {counterOffer}?", "I was thinking {counterOffer}.",
+        "Let's meet at {counterOffer}.", "Would {counterOffer} work?",
+        "{counterOffer} is my best offer.", "I can't go lower than {counterOffer}.",
+        "What do you think of {counterOffer}?", "{counterOffer} - take it or leave it."
+      ],
+      hardball: [ // Phrases for when the user's offer is significantly too low.
+        "That's way too low.", "You're not even close.", "I can't go that low.",
+        "That's not a serious offer.", "Let's be realistic here.",
+        "I think we're done here if that's your best.", "You'll have to do much better.",
+        "I'm not sure we can make a deal at that price.", "That's not going to work for me.",
+        "I think you can do better than that."
+      ]
+    };
+
+    // --- Utility Functions ---
+
+    /**
+     * Retrieves a random phrase from the specified category.
+     * If a counterOffer is provided, it replaces the '{counterOffer}' placeholder.
+     * @param {string} category - The category of phrases to choose from.
+     * @param {number} [counterOffer] - The amount for the counter-offer.
+     * @returns {string} A randomly selected phrase.
+     */
+    const getPhrase = (category, counterOffer) => {
+      const phrase = phrases[category][Math.floor(Math.random() * phrases[category].length)];
+      return counterOffer ? phrase.replace('{counterOffer}', `$${counterOffer.toFixed(2)}`) : phrase;
+    };
+
+    /**
+     * Extracts the first number (integer or decimal) from a given text string.
+     * @param {string} text - The text to search for a number.
+     * @returns {number|null} The extracted number, or null if no number is found.
+     */
+    const extractNumber = (text) => {
+      const match = text.match(/\d+(\.\d+)?/);
+      return match ? parseFloat(match[0]) : null;
+    };
+
+    // --- State Variables ---
+    let messages = []; // Array to store chat messages (both user and bot).
+    let inputValue = ''; // Current value of the user input field.
+    let dealClosed = false; // Flag to indicate if a deal has been made.
+    let currentOffer = originalPrice * (1 + initialMarkup / 100); // Bot's current offer price.
+    let exchangeCount = 0; // Number of back-and-forth exchanges in the negotiation.
+
+    // --- DOM Elements ---
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInput = document.getElementById('chatInput');
+    const chatButton = document.getElementById('chatButton');
+    const chatForm = document.getElementById('chatForm');
+    const resetButton = document.getElementById('resetButton'); // Reset button element
+
+    // Elements for displaying negotiation parameters
+    const paramOriginalPrice = document.getElementById('paramOriginalPrice');
+    const paramMinDiscount = document.getElementById('paramMinDiscount');
+    const paramMaxDiscount = document.getElementById('paramMaxDiscount');
+
+    // --- Core Functions ---
+
+    /**
+     * Renders the chat messages to the UI.
+     * Scrolls to the bottom of the chat window after rendering.
+     */
+    const renderMessages = () => {
+      chatMessages.innerHTML = messages.map((message, index) => {
+        return `<div class="message ${message.sender}">
+                  <span>${message.text}</span>
+                </div>`;
+      }).join('');
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    };
+
+    /**
+     * Calculates the bot's counter-offer based on the user's offer and negotiation state.
+     * Aims to gradually converge towards an acceptable price.
+     * @param {number} userOffer - The user's last offer.
+     * @returns {number} The bot's calculated counter-offer.
+     */
+    const calculateCounterOffer = (userOffer) => {
+      const minAcceptable = originalPrice * (1 - maxDiscount / 100);
+      const maxAcceptable = originalPrice * (1 - minDiscount / 100);
+      // Calculate a dynamic step: the range to cover divided by remaining "patience" (10 exchanges arbitrary max)
+      // This makes the bot concede less as the negotiation progresses.
+      const range = currentOffer - minAcceptable;
+      const step = range / Math.max(1, (10 - exchangeCount)); // Avoid division by zero or negative if exchangeCount > 10
+
+      let newOffer = Math.max(currentOffer - step, minAcceptable);
+
+      // If user's offer is higher than our new calculated offer but still below our current standing offer,
+      // meet somewhere in the middle to show flexibility.
+      if (userOffer > newOffer && userOffer < currentOffer) {
+        newOffer = (userOffer + newOffer) / 2;
+      }
+
+      // Ensure the new offer is within the acceptable bounds (minAcceptable and our previous maxAcceptable interpretation).
+      return Math.min(Math.max(newOffer, minAcceptable), maxAcceptable);
+    };
+
+    /**
+     * Handles the submission of the user's offer.
+     * Processes the offer, determines the bot's response, and updates the UI.
+     * @param {Event} e - The form submission event.
+     */
+    const handleSubmit = (e) => {
+      e.preventDefault();
+      if (dealClosed || !inputValue.trim()) return; // Do nothing if deal is closed or input is empty
+
+      const extractedNumber = extractNumber(inputValue);
+      messages.push({ text: inputValue, sender: 'user' });
+      chatInput.value = ''; // Clear input field after sending
+
+      if (extractedNumber === null) {
+        messages.push({ text: 'I need a number in your offer. Try again.', sender: 'bot' });
+        inputValue = ''; // Clear internal buffer too
+        renderMessages();
+        return;
+      }
+
+      inputValue = ''; // Clear internal buffer
+      exchangeCount++;
+
+      const offer = extractedNumber;
+      // Calculate discount based on the original price.
+      const discount = (originalPrice - offer) / originalPrice * 100;
+      let botResponse;
+
+      if (discount < minDiscount) { // Offer is too low (discount is less than minimum required)
+        // Use hardball tactics early or randomly, otherwise just say it's too low.
+        if (exchangeCount < 3 || Math.random() < 0.3) {
+          botResponse = getPhrase('hardball');
+        } else {
+          botResponse = getPhrase('tooLow');
+        }
+      } else if (discount <= maxDiscount) { // Offer is within the acceptable discount range.
+        botResponse = getPhrase('accept');
+        dealClosed = true;
+        chatInput.disabled = true;
+        chatButton.disabled = true;
+      } else { // Offer is too high (discount is more than maximum allowed), so bot counters.
+        const newOffer = calculateCounterOffer(offer);
+        if (newOffer < currentOffer) { // If the calculated counter is better for the user than bot's current.
+          currentOffer = newOffer;
+          botResponse = getPhrase('counter', newOffer);
+        } else {
+          // This case might happen if calculateCounterOffer logic results in an offer not lower than currentOffer
+          // (e.g. user offers something very high, pushing calculated offer up to maxAcceptable).
+          // Or if user's offer was already good but not quite a deal.
+          botResponse = getPhrase('close');
+        }
+      }
+
+      messages.push({ text: botResponse, sender: 'bot' });
+      renderMessages();
+    };
+
+    /**
+     * Resets the negotiation to its initial state.
+     * Clears messages, resets state variables, re-enables inputs, and starts with a new initial offer.
+     */
+    const resetNegotiation = () => {
+      messages = [];
+      dealClosed = false;
+      currentOffer = originalPrice * (1 + initialMarkup / 100);
+      exchangeCount = 0;
+      inputValue = '';
+
+      chatInput.value = ''; // Clear the input field
+      chatInput.disabled = false;
+      chatButton.disabled = false;
+
+      // Add initial bot message
+      messages.push({ text: `${getPhrase('initial')} I'm starting at $${currentOffer.toFixed(2)}.`, sender: 'bot' });
+      renderMessages();
+    };
+
+    // --- Event Listeners ---
+    chatForm.addEventListener('submit', handleSubmit);
+    chatInput.addEventListener('input', (e) => {
+      inputValue = e.target.value;
+    });
+    resetButton.addEventListener('click', resetNegotiation);
+
+    // --- Initialization ---
+    // Populate negotiation parameters display
+    paramOriginalPrice.textContent = originalPrice.toFixed(2);
+    paramMinDiscount.textContent = minDiscount;
+    paramMaxDiscount.textContent = maxDiscount;
+
+    // Initial message and UI setup
+    messages.push({ text: `${getPhrase('initial')} I'm starting at $${currentOffer.toFixed(2)}.`, sender: 'bot' });
+    renderMessages();
+    chatInput.disabled = false; // Ensure input is enabled on load
+    chatButton.disabled = false; // Ensure button is enabled on load
+  </script>
+</body>
+</html>
         "Let's talk price.", "What's your offer?", "How much you thinking?",
         "Give me a number.", "What's fair to you?", "Your best price?",
         "Make me an offer.", "What's your budget?", "Throw out a figure.",
