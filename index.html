@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traffic Simulation</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            z-index: 100;
+            display:block;
+            color: white;
+            font-family: monospace;
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Scenario B: V2P Data Exchange (Refined)</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+    <script>
+        // --- Standard Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(-10, 15, 25);
+        camera.lookAt(0, 0, 0);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        const world = new CANNON.World();
+        world.gravity.set(0, -9.82, 0);
+        const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
+        groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+        world.addBody(groundBody);
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x228B22 }));
+        ground.rotation.x = -Math.PI / 2;
+        scene.add(ground);
+        const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x444444 });
+        const mainStreet = new THREE.Mesh(new THREE.PlaneGeometry(8, 60), roadMaterial);
+        mainStreet.rotation.x = -Math.PI / 2;
+        mainStreet.position.y = 0.01;
+        scene.add(mainStreet);
+
+        // --- Road Markings ---
+        const lineMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        for (let i = -30; i < 30; i += 3) {
+            const line = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 1.5), lineMaterial);
+            line.rotation.x = -Math.PI / 2;
+            line.position.set(0, 0.02, i);
+            scene.add(line);
+        }
+        const stopLine = new THREE.Mesh(new THREE.PlaneGeometry(8, 0.2), lineMaterial);
+        stopLine.rotation.x = -Math.PI / 2;
+        stopLine.position.set(0, 0.02, 5);
+        scene.add(stopLine);
+
+
+        // --- Refined Entity Creation ---
+        const allEntities = [];
+        function createVehicle(color, position, name) {
+            const chassisBody = new CANNON.Body({ mass: 150, shape: new CANNON.Box(new CANNON.Vec3(0.9, 0.5, 2)) });
+            chassisBody.position.copy(position);
+            const vehicle = new CANNON.RigidVehicle({ chassisBody });
+
+            const wheelOptions = { radius: 0.4, directionLocal: new CANNON.Vec3(0, -1, 0), chassisConnectionPointLocal: new CANNON.Vec3() };
+            wheelOptions.chassisConnectionPointLocal.set(1, 0, 1.5); vehicle.addWheel(wheelOptions);
+            wheelOptions.chassisConnectionPointLocal.set(1, 0, -1.5); vehicle.addWheel(wheelOptions);
+            wheelOptions.chassisConnectionPointLocal.set(-1, 0, 1.5); vehicle.addWheel(wheelOptions);
+            wheelOptions.chassisConnectionPointLocal.set(-1, 0, -1.5); vehicle.addWheel(wheelOptions);
+            vehicle.addToWorld(world);
+
+            const vehicleGroup = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1, 4), new THREE.MeshStandardMaterial({ color }));
+            body.position.y = 0.5;
+            const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.8, 2.5), new THREE.MeshStandardMaterial({ color: 0xcccccc }));
+            cabin.position.set(0, 1.4, -0.2);
+            vehicleGroup.add(body, cabin);
+            scene.add(vehicleGroup);
+
+            const wheelMeshes = [];
+            const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x111111 });
+            for(let i=0; i<4; i++) {
+                const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,0.3,16), wheelMaterial);
+                wheel.rotation.z = Math.PI/2;
+                scene.add(wheel);
+                wheelMeshes.push(wheel);
+            }
+
+            const entity = { type: 'vehicle', vehicle, mesh: vehicleGroup, body: chassisBody, name, wheelMeshes };
+            allEntities.push(entity);
+            return entity;
+        }
+
+        function createPedestrian(position, path) {
+            const body = new CANNON.Body({ mass: 70, shape: new CANNON.Box(new CANNON.Vec3(0.2, 0.9, 0.2)) });
+            body.position.copy(position);
+            world.addBody(body);
+
+            const pedGroup = new THREE.Group();
+            const capsule = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 1.0, 4, 8), new THREE.MeshStandardMaterial({ color: 0xeeeeff }));
+            capsule.position.y = 0.7;
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 16), new THREE.MeshStandardMaterial({ color: 0xffdbac }));
+            head.position.y = 1.6;
+            pedGroup.add(capsule, head);
+            scene.add(pedGroup);
+
+            const entity = { type: 'pedestrian', body, mesh: pedGroup, path, targetIndex: 0,
+                broadcast: () => ({ position: entity.body.position })
+            };
+            allEntities.push(entity);
+            return entity;
+        }
+
+        // --- Scenario Setup ---
+        const fsdCar = createVehicle(0x0000ff, new CANNON.Vec3(2, 2, -20), "FSD Car");
+        const jaywalker = createPedestrian(new CANNON.Vec3(-5, 1, 2), [new CANNON.Vec3(5, 1, 2)]);
+        const obstructionMesh = new THREE.Mesh(new THREE.BoxGeometry(2, 3, 5), new THREE.MeshStandardMaterial({ color: 0x8B4513 }));
+        obstructionMesh.position.set(-2, 1.5, 5);
+        scene.add(obstructionMesh);
+
+        // --- AI Logic (mostly unchanged) ---
+        const infoDiv = document.getElementById('info');
+        const fsdCarPath = [new CANNON.Vec3(2, 0.5, 25), new CANNON.Vec3(2, 0.5, -20)];
+        let fsdTargetIndex = 0;
+        function updateFsdCar() {
+            const brakeForce = 100;
+            let obstacleDetected = false;
+            const data = jaywalker.broadcast();
+            if (Math.abs(data.position.x - fsdCar.body.position.x) < 2 && Math.abs(data.position.z - fsdCar.body.position.z) < 15) {
+                obstacleDetected = true;
+                infoDiv.innerText = "Collision Alert from V2P! Braking.";
+            }
+            if (obstacleDetected) {
+                fsdCar.vehicle.setBrake(brakeForce, 0); fsdCar.vehicle.setBrake(brakeForce, 1);
+                fsdCar.vehicle.setBrake(brakeForce, 2); fsdCar.vehicle.setBrake(brakeForce, 3);
+                fsdCar.vehicle.applyEngineForce(0,2); fsdCar.vehicle.applyEngineForce(0,3);
+            } else {
+                infoDiv.innerText = "Scenario B: All Clear";
+                fsdCar.vehicle.setBrake(0,0); fsdCar.vehicle.setBrake(0,1); fsdCar.vehicle.setBrake(0,2); fsdCar.vehicle.setBrake(0,3);
+                fsdCar.vehicle.applyEngineForce(-500, 2); fsdCar.vehicle.applyEngineForce(-500, 3);
+            }
+        }
+        function updatePedestrians() {
+            const p = jaywalker;
+            const target = p.path[p.targetIndex];
+            const currentPos = p.body.position;
+            if (currentPos.distanceTo(target) < 0.5) p.targetIndex = (p.targetIndex + 1) % p.path.length;
+            const direction = target.vsub(currentPos).unit();
+            p.body.velocity.set(direction.x * 1.5, 0, direction.z * 1.5);
+        }
+
+        // --- Main Animation Loop ---
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const deltaTime = clock.getDelta();
+            world.step(1 / 60, deltaTime, 3);
+            updateFsdCar();
+            updatePedestrians();
+
+            allEntities.forEach(e => {
+                e.mesh.position.copy(e.body.position);
+                e.mesh.quaternion.copy(e.body.quaternion);
+                if (e.type === 'vehicle') {
+                    for (let i = 0; i < e.vehicle.wheelInfos.length; i++) {
+                        e.vehicle.updateWheelTransform(i);
+                        const t = e.vehicle.wheelInfos[i].worldTransform;
+                        e.wheelMeshes[i].position.copy(t.position);
+                        e.wheelMeshes[i].quaternion.copy(t.quaternion);
+                    }
+                }
+            });
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
+</body>
+</html>
